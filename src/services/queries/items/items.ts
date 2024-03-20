@@ -30,7 +30,7 @@ export const getItems = async (ids: string[]) => {
         }
 
         return deserialize(ids[i], result);
-    })
+    });
 };
 
 export const createItem = async (attrs: CreateItemAttrs, userId: string) => {
