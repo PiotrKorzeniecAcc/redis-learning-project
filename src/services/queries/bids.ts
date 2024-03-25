@@ -1,15 +1,47 @@
 import type { CreateBidAttrs, Bid } from '$services/types';
-import { bidHistoryKey } from '$services/keys';
+import { bidHistoryKey, itemsKey } from '$services/keys';
 import { client } from '$services/redis';
 import { DateTime } from 'luxon';
+import { getItem } from './items'
 
 export const createBid = async (attrs: CreateBidAttrs) => {
-	const serialized = serializeHistory(
-		attrs.amount,
-		attrs.createdAt.toMillis()
-	);
+	return client.executeIsolated(async (isolatedClient) => {	// concurrency issue solved with WATCH-MULTI-EXEC
+		await isolatedClient.watch(itemsKey(attrs.itemId));
 
-	return client.rPush(bidHistoryKey(attrs.itemId), serialized);
+		const item = await getItem(attrs.itemId);
+
+		// Does the item exist?
+		if (!item) {
+			throw new Error('Item does not exist');
+		}
+
+		// Is the item still open for bids?
+		if (item.endingAt.diff(DateTime.now()).toMillis() < 0) {
+			throw new Error('Item closed to bidding');
+		}
+
+		// Is the bid amount greater that the existing highest bid?
+		if (item.price >= attrs.amount) {
+			throw new Error('Bid too low');
+		}
+
+		const serialized = serializeHistory(
+			attrs.amount,
+			attrs.createdAt.toMillis()
+			);
+
+		return isolatedClient.multi()
+			.rPush(bidHistoryKey(attrs.itemId), serialized)		  					// add the bid to bid history list
+			.hSet(												  					// update bids count, price and userId of user with highest bid
+				itemsKey(item.id),
+				{
+					bids: item.bids + 1,
+					price: attrs.amount,
+					highestBidUserId: attrs.userId
+				}
+			)
+			.exec();
+	});
 };
 
 export const getBidHistory = async (itemId: string, offset = 0, count = 10): Promise<Bid[]> => {
