@@ -51,6 +51,22 @@ const client = createClient({
 				},
 				transformReply() {}
 			}
+		),
+		unlock: defineScript(
+			{
+				NUMBER_OF_KEYS: 1,
+				transformArguments(key: string, token: string) {
+					return [key, token]
+                },
+				transformReply(reply: any) {
+					return reply
+                },
+				SCRIPT: `
+					if redis.call('GET', KEYS[1]) == ARGV[1] then
+						return redis.call('DEL', KEYS[1])
+					end
+				`
+            }
 		)
 	}
 });
